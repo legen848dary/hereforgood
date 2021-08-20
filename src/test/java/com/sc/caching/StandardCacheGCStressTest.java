@@ -16,7 +16,7 @@ public class StandardCacheGCStressTest extends MultithreadedTestCase {
     @Override
     public void initialize() {
         mapping = mock(Function.class);
-        when(mapping.apply(eq("DJ"))).thenReturn("Sark");
+        when(mapping.apply(eq("DJ"))).thenReturn("Debjyoti");
         cache = new StandardCache<>(mapping, StoragePolicy.GC_OPTMIZED);
     }
 
