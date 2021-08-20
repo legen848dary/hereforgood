@@ -1,6 +1,12 @@
 package com.sc.caching;
 
+import com.sc.caching.policies.DataFetchPolicy;
+import com.sc.caching.policies.NonBlockingFetch;
+import com.sc.caching.policies.StoragePolicy;
+import org.agrona.collections.Object2ObjectHashMap;
+
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -15,18 +21,27 @@ public class StandardCache<K, V> implements Cache<K, V> {
     private final Map<K, V> internalCollection;
     private final Function<K, V> mappingFunction;
     private final Set<K> nullKeys;
+    private final DataFetchPolicy<V> dataFetchPolicy;
 
     public StandardCache(Function<K, V> mappingFunction) {
-        this(mappingFunction, HashMap::new);
+        this(mappingFunction, StoragePolicy.DEFAULT);
     }
 
-    public StandardCache(Function<K, V> mappingFunction, Supplier<Map<K, V>> internalCollectionSupplier) {
+    public StandardCache(Function<K, V> mappingFunction, StoragePolicy policy) {
+        this(mappingFunction, policy == StoragePolicy.GC_OPTMIZED ? Object2ObjectHashMap::new: HashMap::new);
+    }
+
+    /**
+     * To keep it simple, we keep this supplier closed for public usage
+     * @param mappingFunction
+     * @param customInternalMapProvider
+     */
+    private StandardCache(Function<K, V> mappingFunction, Supplier<Map<K, V>> customInternalMapProvider) {
         Objects.requireNonNull(mappingFunction, ERROR_NON_NULL_MAP_FUNCTION);
-        Objects.requireNonNull(internalCollectionSupplier, ERROR_NON_NULL_INTERNAL_COLLECTION_SUPPLIER);
-        this.internalCollection = internalCollectionSupplier.get();
-        Objects.requireNonNull(this.internalCollection, ERROR_NON_NULL_INTERNAL_COLLECTION);
+        this.internalCollection = customInternalMapProvider.get();
         this.mappingFunction = mappingFunction;
         this.nullKeys = new HashSet<>();
+        dataFetchPolicy = new NonBlockingFetch<>(100, TimeUnit.MILLISECONDS);
     }
 
     @Override
@@ -34,24 +49,18 @@ public class StandardCache<K, V> implements Cache<K, V> {
         Objects.requireNonNull(key, ERROR_NON_NULL_KEY);
         V cached = internalCollection.get(key);
         if (cached != null || nullKeys.contains(key)) return cached;
-        synchronized (this) {
-            cached = internalCollection.get(key);
-            if (cached == null && !nullKeys.contains(key)) {
-                cached = mappingFunction.apply(key);
-                if (cached != null) {
-                    internalCollection.put(key, cached);
+        return dataFetchPolicy.execute(() -> {
+            V result = internalCollection.get(key);
+            if (result == null && !nullKeys.contains(key)) {
+                result = mappingFunction.apply(key);
+                if (result != null) {
+                    internalCollection.put(key, result);
                 } else {
                     nullKeys.add(key);
                 }
             }
-        }
-        return cached;
-    }
-
-    @Override
-    public void clear() {
-        this.internalCollection.clear();
-        this.nullKeys.clear();
+            return result;
+        });
     }
 
     @Override
