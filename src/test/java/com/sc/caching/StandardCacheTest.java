@@ -39,4 +39,15 @@ public class StandardCacheTest {
         verify(mapping, times(1)).apply(eq("DJ"));
     }
 
+    @Test
+    public void test_clearNullKeys() {
+        Function<String, String> mapping = mock(Function.class);
+        when(mapping.apply("DJ")).thenReturn(null);
+        Cache<String, String> cache = new StandardCache<>(mapping);
+        assertNull(cache.get("DJ"));
+        verify(mapping, times(1)).apply(eq("DJ"));
+        cache.clearNullKeys();
+        assertNull(cache.get("DJ"));
+        verify(mapping, times(2)).apply(eq("DJ"));
+    }
 }

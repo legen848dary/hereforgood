@@ -32,7 +32,7 @@ public class StandardCache<K, V> implements Cache<K, V> {
     }
 
     /**
-     * To keep it simple, we keep this supplier closed for public usage
+     * To keep it simple, we are not exposing this flexibility at this moment
      * @param mappingFunction
      * @param customInternalMapProvider
      */
