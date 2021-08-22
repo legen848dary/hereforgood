@@ -1,52 +1,83 @@
 package com.sc.scheduler;
 
-import com.sc.caching.policies.StoragePolicy;
-import org.agrona.collections.Long2LongHashMap;
-
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentNavigableMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 public class CharteredSchedulerEngine implements DeadlineEngine {
-    private final static long THE_MISSING_VALUE = 0;
-    private final Map<Long, Long> registry;
+    private final ConcurrentSkipListMap<Long, List<Long>> deadlineToRequestIds;
+    private final Map<Long, Long> requestIdToDeadline;
     private final AtomicLong requestIds = new AtomicLong(0);
 
-    public CharteredSchedulerEngine(StoragePolicy storagePolicy) {
-        this(storagePolicy == StoragePolicy.GC_OPTMIZED ? () -> new Long2LongHashMap(THE_MISSING_VALUE) : HashMap::new);
+    public CharteredSchedulerEngine() {
+        this.deadlineToRequestIds = new ConcurrentSkipListMap<>();
+        this.requestIdToDeadline = new ConcurrentHashMap<>();
     }
 
-    /**
-     * To keep it simple, we are not exposing this flexibility at this moment
-     *
-     * @param supplier
-     */
-    private CharteredSchedulerEngine(Supplier<Map<Long, Long>> supplier) {
-        this.registry = supplier.get();
+    private long getNextUniqueId() {
+        return requestIds.incrementAndGet();
     }
 
     @Override
     public long schedule(long deadlineMs) {
-        long requestId = requestIds.incrementAndGet();
-        this.registry.put(requestId, deadlineMs);
+        long requestId = getNextUniqueId();
+        this.requestIdToDeadline.put(requestId, deadlineMs);
+        List<Long> requestIds = this.deadlineToRequestIds.computeIfAbsent(deadlineMs, x -> new ArrayList<>());
+        requestIds.add(requestId);
         return requestId;
     }
 
     @Override
     public boolean cancel(long requestId) {
-        return this.registry.remove(requestId) > THE_MISSING_VALUE;
+        Long deadLine = requestIdToDeadline.remove(requestId);
+        if (deadLine != null) {
+            List<Long> requestIds = deadlineToRequestIds.get(deadLine);
+            if (requestIds != null) {
+                requestIds.remove(requestId);
+            }
+            return true;
+        }
+        return false;
     }
 
     @Override
     public int poll(long nowMs, Consumer<Long> handler, int maxPoll) {
-        // the interesting part
-        return 0;
+        ConcurrentNavigableMap<Long, List<Long>> eligible = deadlineToRequestIds.headMap(nowMs, true);
+        int count = 0;
+        List<Long> toRemove = new ArrayList<>();
+        for (Long deadline : eligible.keySet()) {
+            if (deadline > nowMs || count > maxPoll - 1) {
+                triggerExpiries(toRemove, handler);
+                return Math.min(count, maxPoll);
+            }
+            List<Long> requestIds = eligible.get(deadline);
+            for (Long requestId : requestIds) {
+                if (count > maxPoll - 1) {
+                    triggerExpiries(toRemove, handler);
+                    return maxPoll;
+                }
+                toRemove.add(requestId);
+                count++;
+            }
+        }
+        triggerExpiries(toRemove, handler);
+        return count;
+    }
+
+    private void triggerExpiries(List<Long> requestIds, Consumer<Long> handler) {
+        for (Long requestId: requestIds) {
+            cancel(requestId);
+            handler.accept(requestId);
+        }
     }
 
     @Override
     public int size() {
-        return this.registry.size();
+        return this.requestIdToDeadline.size();
     }
 }
