@@ -1,8 +1,8 @@
 package com.sc.caching;
 
-import com.sc.caching.policies.DataFetchPolicy;
-import com.sc.caching.policies.NonBlockingFetch;
-import com.sc.caching.policies.StoragePolicy;
+import com.sc.policies.SyncPolicy;
+import com.sc.policies.NonBlockingSync;
+import com.sc.policies.StoragePolicy;
 import org.agrona.collections.Object2ObjectHashMap;
 
 import java.util.*;
@@ -21,7 +21,7 @@ public class StandardCache<K, V> implements Cache<K, V> {
     private final Map<K, V> internalCollection;
     private final Function<K, V> mappingFunction;
     private final Set<K> nullKeys;
-    private final DataFetchPolicy<V> dataFetchPolicy;
+    private final SyncPolicy<V> syncPolicy;
 
     public StandardCache(Function<K, V> mappingFunction) {
         this(mappingFunction, StoragePolicy.DEFAULT);
@@ -41,7 +41,7 @@ public class StandardCache<K, V> implements Cache<K, V> {
         this.internalCollection = customInternalMapProvider.get();
         this.mappingFunction = mappingFunction;
         this.nullKeys = new HashSet<>();
-        dataFetchPolicy = new NonBlockingFetch<>(100, TimeUnit.MILLISECONDS);
+        syncPolicy = new NonBlockingSync<>(100, TimeUnit.MILLISECONDS);
     }
 
     @Override
@@ -49,7 +49,7 @@ public class StandardCache<K, V> implements Cache<K, V> {
         Objects.requireNonNull(key, ERROR_NON_NULL_KEY);
         V cached = internalCollection.get(key);
         if (cached != null || nullKeys.contains(key)) return cached;
-        return dataFetchPolicy.execute(() -> {
+        return syncPolicy.execute(() -> {
             V result = internalCollection.get(key);
             if (result == null && !nullKeys.contains(key)) {
                 result = mappingFunction.apply(key);

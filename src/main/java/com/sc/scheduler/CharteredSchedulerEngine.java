@@ -1,22 +1,24 @@
 package com.sc.scheduler;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentNavigableMap;
+import com.sc.policies.BlockingSync;
+import com.sc.policies.NonBlockingSync;
+import com.sc.policies.SyncPolicy;
+
+import java.util.*;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 public class CharteredSchedulerEngine implements DeadlineEngine {
-    private final ConcurrentSkipListMap<Long, List<Long>> deadlineToRequestIds;
+    private final NavigableMap<Long, List<Long>> deadlineToRequestIds;
     private final Map<Long, Long> requestIdToDeadline;
     private final AtomicLong requestIds = new AtomicLong(0);
+    private final SyncPolicy<Void> syncPolicy = new NonBlockingSync<>(100, TimeUnit.MILLISECONDS);
 
     public CharteredSchedulerEngine() {
         this.deadlineToRequestIds = new ConcurrentSkipListMap<>();
-        this.requestIdToDeadline = new ConcurrentHashMap<>();
+        this.requestIdToDeadline = new HashMap<>();
     }
 
     private long getNextUniqueId() {
@@ -27,8 +29,10 @@ public class CharteredSchedulerEngine implements DeadlineEngine {
     public long schedule(long deadlineMs) {
         long requestId = getNextUniqueId();
         this.requestIdToDeadline.put(requestId, deadlineMs);
-        List<Long> requestIds = this.deadlineToRequestIds.computeIfAbsent(deadlineMs, x -> new ArrayList<>());
-        requestIds.add(requestId);
+        syncPolicy.execute (()-> {
+            List<Long> requestIds = this.deadlineToRequestIds.computeIfAbsent(deadlineMs, x -> new ArrayList<>());
+            requestIds.add(requestId);
+        });
         return requestId;
     }
 
@@ -36,10 +40,15 @@ public class CharteredSchedulerEngine implements DeadlineEngine {
     public boolean cancel(long requestId) {
         Long deadLine = requestIdToDeadline.remove(requestId);
         if (deadLine != null) {
-            List<Long> requestIds = deadlineToRequestIds.get(deadLine);
-            if (requestIds != null) {
-                requestIds.remove(requestId);
-            }
+            syncPolicy.execute(() -> {
+                List<Long> requestIds = deadlineToRequestIds.get(deadLine);
+                if (requestIds != null) {
+                    requestIds.remove(requestId);
+                    if (requestIds.isEmpty()) {
+                        deadlineToRequestIds.remove(deadLine);
+                    }
+                }
+            });
             return true;
         }
         return false;
@@ -47,7 +56,7 @@ public class CharteredSchedulerEngine implements DeadlineEngine {
 
     @Override
     public int poll(long nowMs, Consumer<Long> handler, int maxPoll) {
-        ConcurrentNavigableMap<Long, List<Long>> eligible = deadlineToRequestIds.headMap(nowMs, true);
+        NavigableMap<Long, List<Long>> eligible = deadlineToRequestIds.headMap(nowMs, true);
         int count = 0;
         List<Long> toRemove = new ArrayList<>();
         for (Long deadline : eligible.keySet()) {
@@ -70,7 +79,7 @@ public class CharteredSchedulerEngine implements DeadlineEngine {
     }
 
     private void triggerExpiries(List<Long> requestIds, Consumer<Long> handler) {
-        for (Long requestId: requestIds) {
+        for (Long requestId : requestIds) {
             cancel(requestId);
             handler.accept(requestId);
         }
@@ -78,6 +87,9 @@ public class CharteredSchedulerEngine implements DeadlineEngine {
 
     @Override
     public int size() {
-        return this.requestIdToDeadline.size();
+        if (this.requestIdToDeadline.size() == deadlineToRequestIds.values().stream().mapToLong(Collection::size).sum())
+            return this.requestIdToDeadline.size();
+        else
+            throw new IllegalStateException("mismatch, deadlineToRequestIds.values.size " + deadlineToRequestIds.values().size() + ", requestIdToDeadline.size " + requestIdToDeadline.size());
     }
 }

@@ -1,4 +1,4 @@
-package com.sc.caching.policies;
+package com.sc.policies;
 
 public enum StoragePolicy {
     DEFAULT, GC_OPTMIZED

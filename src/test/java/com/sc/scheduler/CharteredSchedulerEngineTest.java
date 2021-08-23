@@ -1,21 +1,16 @@
 package com.sc.scheduler;
 
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 
 import java.util.function.Consumer;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.*;
 
 public class CharteredSchedulerEngineTest {
-
-    @Mock
-    private SystemTimeProvider timeProvider;
 
     @Before
     public void setUp() throws Exception {

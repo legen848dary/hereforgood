@@ -1,6 +1,6 @@
 package com.sc.caching;
 
-import com.sc.caching.policies.StoragePolicy;
+import com.sc.policies.StoragePolicy;
 import edu.umd.cs.mtc.MultithreadedTestCase;
 import edu.umd.cs.mtc.TestFramework;
 import org.junit.Test;
