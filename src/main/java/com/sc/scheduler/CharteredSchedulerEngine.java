@@ -84,8 +84,7 @@ public class CharteredSchedulerEngine implements DeadlineEngine {
 
     private void triggerExpiredSchedules(List<Long> requestIds, Consumer<Long> handler) {
         for (Long requestId : requestIds) {
-            cancel(requestId);
-            handler.accept(requestId);
+            if (cancel(requestId)) handler.accept(requestId);
         }
     }
 
