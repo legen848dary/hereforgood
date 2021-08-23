@@ -37,6 +37,6 @@ public class CharteredSchedulerEngineSameDeadlineStressTest extends Multithreade
 
     @Test
     public void testCounter() throws Throwable {
-        TestFramework.runManyTimes(new CharteredSchedulerEngineSameDeadlineStressTest(), 100);
+        TestFramework.runManyTimes(new CharteredSchedulerEngineSameDeadlineStressTest(), 1000);
     }
 }

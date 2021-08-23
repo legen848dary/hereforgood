@@ -31,6 +31,6 @@ public class CharteredSchedulerEngineSameDeadlineCancelStressTest extends Multit
 
     @Test
     public void testCounter() throws Throwable {
-        TestFramework.runManyTimes(new CharteredSchedulerEngineSameDeadlineCancelStressTest(), 1);
+        TestFramework.runManyTimes(new CharteredSchedulerEngineSameDeadlineCancelStressTest(), 1000);
     }
 }

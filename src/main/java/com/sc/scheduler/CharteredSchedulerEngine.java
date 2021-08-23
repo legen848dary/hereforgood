@@ -1,10 +1,10 @@
 package com.sc.scheduler;
 
-import com.sc.policies.BlockingSync;
 import com.sc.policies.NonBlockingSync;
 import com.sc.policies.SyncPolicy;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -14,11 +14,13 @@ public class CharteredSchedulerEngine implements DeadlineEngine {
     private final NavigableMap<Long, List<Long>> deadlineToRequestIds;
     private final Map<Long, Long> requestIdToDeadline;
     private final AtomicLong requestIds = new AtomicLong(0);
-    private final SyncPolicy<Void> syncPolicy = new NonBlockingSync<>(100, TimeUnit.MILLISECONDS);
+    private final int EXECUTION_OK = 0;
+    private final int EXECUTION_ERROR = -1;
+    private final SyncPolicy<Integer> syncPolicy = new NonBlockingSync<>(100, TimeUnit.MILLISECONDS);
 
     public CharteredSchedulerEngine() {
         this.deadlineToRequestIds = new ConcurrentSkipListMap<>();
-        this.requestIdToDeadline = new HashMap<>();
+        this.requestIdToDeadline = new ConcurrentHashMap<>();
     }
 
     private long getNextUniqueId() {
@@ -28,8 +30,8 @@ public class CharteredSchedulerEngine implements DeadlineEngine {
     @Override
     public long schedule(long deadlineMs) {
         long requestId = getNextUniqueId();
-        this.requestIdToDeadline.put(requestId, deadlineMs);
         syncPolicy.execute (()-> {
+            this.requestIdToDeadline.put(requestId, deadlineMs);
             List<Long> requestIds = this.deadlineToRequestIds.computeIfAbsent(deadlineMs, x -> new ArrayList<>());
             requestIds.add(requestId);
         });
@@ -38,9 +40,9 @@ public class CharteredSchedulerEngine implements DeadlineEngine {
 
     @Override
     public boolean cancel(long requestId) {
-        Long deadLine = requestIdToDeadline.remove(requestId);
-        if (deadLine != null) {
-            syncPolicy.execute(() -> {
+        return syncPolicy.execute(() -> {
+            Long deadLine = requestIdToDeadline.remove(requestId);
+            if (deadLine != null) {
                 List<Long> requestIds = deadlineToRequestIds.get(deadLine);
                 if (requestIds != null) {
                     requestIds.remove(requestId);
@@ -48,37 +50,39 @@ public class CharteredSchedulerEngine implements DeadlineEngine {
                         deadlineToRequestIds.remove(deadLine);
                     }
                 }
-            });
-            return true;
-        }
-        return false;
+                return EXECUTION_OK;
+            }
+            return EXECUTION_ERROR;
+        }) == EXECUTION_OK;
     }
 
     @Override
     public int poll(long nowMs, Consumer<Long> handler, int maxPoll) {
-        NavigableMap<Long, List<Long>> eligible = deadlineToRequestIds.headMap(nowMs, true);
+        NavigableSet<Long> keySet = deadlineToRequestIds.navigableKeySet();
         int count = 0;
-        List<Long> toRemove = new ArrayList<>();
-        for (Long deadline : eligible.keySet()) {
+        List<Long> expiredList = new ArrayList<>();
+        for (Long deadline: keySet) {
             if (deadline > nowMs || count > maxPoll - 1) {
-                triggerExpiries(toRemove, handler);
-                return Math.min(count, maxPoll);
+                count = Math.min(count, maxPoll);
+                break;
             }
-            List<Long> requestIds = eligible.get(deadline);
+            List<Long> requestIds = deadlineToRequestIds.get(deadline);
             for (Long requestId : requestIds) {
                 if (count > maxPoll - 1) {
-                    triggerExpiries(toRemove, handler);
-                    return maxPoll;
+                    count = maxPoll;
+                    break;
                 }
-                toRemove.add(requestId);
+                expiredList.add(requestId);
                 count++;
             }
         }
-        triggerExpiries(toRemove, handler);
+        if (!expiredList.isEmpty()) {
+            triggerExpiredSchedules(expiredList, handler);
+        }
         return count;
     }
 
-    private void triggerExpiries(List<Long> requestIds, Consumer<Long> handler) {
+    private void triggerExpiredSchedules(List<Long> requestIds, Consumer<Long> handler) {
         for (Long requestId : requestIds) {
             cancel(requestId);
             handler.accept(requestId);
@@ -87,9 +91,14 @@ public class CharteredSchedulerEngine implements DeadlineEngine {
 
     @Override
     public int size() {
-        if (this.requestIdToDeadline.size() == deadlineToRequestIds.values().stream().mapToLong(Collection::size).sum())
-            return this.requestIdToDeadline.size();
-        else
-            throw new IllegalStateException("mismatch, deadlineToRequestIds.values.size " + deadlineToRequestIds.values().size() + ", requestIdToDeadline.size " + requestIdToDeadline.size());
+        int size = syncPolicy.execute(() -> {
+            int size1 = this.requestIdToDeadline.size();
+            long verifySize = deadlineToRequestIds.values().stream().mapToLong(Collection::size).sum();
+            if (size1 == verifySize) return size1;
+            System.out.println("mismatch, deadlineToRequestIds.values.size " + verifySize + ", requestIdToDeadline.size " + size1);
+            return EXECUTION_ERROR;
+        });
+        if (size > EXECUTION_ERROR) return size;
+        throw new IllegalStateException("mismatch");
     }
 }
